@@ -54,6 +54,7 @@ def sample(
     prompt="",
     batch_size=1,
     guidance_scale=4,
+    style_prompt="laion",
     device="cpu",
 ):
     model.del_cache()
@@ -64,6 +65,14 @@ def sample(
     )
 
     # Pack the tokens together into model kwargs.
+    # style_prompt laion  cc12m  pokemon  country211  pixelart openimages  ffhq  coco  vaporwave  virtualgenome imagenet
+    style_token = glide_model.tokenizer.encode(style_prompt)
+    style_token, style_mask = glide_model.tokenizer.padded_tokens_and_mask(style_token, glide_options["text_ctx"])
+    model_kwargs = dict(
+        tokens=th.tensor([tokens] * batch_size + [style_tokens] * batch_size + [uncond_tokens] * batch_size, device=device),
+        mask=th.tensor([mask] * batch_size + [style_mask] * batch_size + [uncond_mask] * batch_size, dtype=th.bool, device=device),
+    )
+    """
     model_kwargs = dict(
         tokens=th.tensor(
             [tokens] * batch_size + [uncond_tokens] * batch_size, device=device
@@ -74,14 +83,16 @@ def sample(
             device=device,
         ),
     )
+    """
     def model_fn(x_t, ts, **kwargs):
-        half = x_t[: len(x_t) // 2]
-        combined = th.cat([half, half], dim=0)
+        half = x_t[: len(x_t) // 3]
+        combined = th.cat([half, half, half], dim=0)
         model_out = model(combined, ts, **kwargs)
         eps, rest = model_out[:, :3], model_out[:, 3:]
-        cond_eps, uncond_eps = th.split(eps, len(eps) // 2, dim=0)
+        cond_eps, cls_eps, uncond_eps = th.split(eps, len(eps) // 3, dim=0)
         half_eps = uncond_eps + guidance_scale * (cond_eps - uncond_eps)
-        eps = th.cat([half_eps, half_eps], dim=0)
+        half_eps = (uncond_eps + cls_guidance_scale * (cls_eps - uncond_eps)) + guidance_scale * (cond_eps - uncond_eps)
+        eps = th.cat([half_eps, half_eps, half_eps], dim=0)
         return th.cat([eps, rest], dim=1)
 
     full_batch_size = batch_size * 2
